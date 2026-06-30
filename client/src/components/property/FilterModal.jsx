@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import Modal from '../ui/Modal.jsx';
 import { PROPERTY_TYPES, AMENITIES, AMENITY_ICONS } from '../../utils/constants.js';
 import { formatCurrency } from '../../utils/format.js';
+import { propertyService } from '../../api/services.js';
 
 /**
  * Full search filter modal: price range, property type, amenities, bedrooms,
@@ -23,6 +24,7 @@ const EMPTY = {
 
 export default function FilterModal({ open, onClose, initial = {}, onApply }) {
   const [draft, setDraft] = useState(EMPTY);
+  const [priceStats, setPriceStats] = useState({ min: 0, max: 1000, buckets: [] });
 
   // Re-seed whenever the modal opens.
   useEffect(() => {
@@ -38,6 +40,21 @@ export default function FilterModal({ open, onClose, initial = {}, onApply }) {
       });
     }
   }, [open, initial]);
+
+  // Load the price distribution once when the modal first opens.
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    propertyService
+      .priceStats()
+      .then((data) => {
+        if (active && data.max > data.min) setPriceStats(data);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [open]);
 
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
@@ -106,36 +123,46 @@ export default function FilterModal({ open, onClose, initial = {}, onApply }) {
     >
       {/* Price range */}
       <section className="border-b border-ink-100 pb-5 dark:border-ink-700">
-        <h3 className="mb-3 text-base font-bold">Price range (per night)</h3>
-        <div className="flex items-center gap-4">
+        <h3 className="mb-1 text-base font-bold">Price range (per night)</h3>
+        <p className="mb-3 text-sm text-ink-500">
+          {formatCurrency(draft.minPrice || priceStats.min)} –{' '}
+          {draft.maxPrice ? formatCurrency(draft.maxPrice) : `${formatCurrency(priceStats.max)}+`}
+        </p>
+
+        <PriceHistogram
+          stats={priceStats}
+          minPrice={draft.minPrice}
+          maxPrice={draft.maxPrice}
+          onChange={(patch) => set(patch)}
+        />
+
+        <div className="mt-5 flex items-center gap-4">
           <label className="flex-1">
-            <span className="mb-1 block text-xs text-ink-500">Min</span>
+            <span className="mb-1 block text-xs text-ink-500">Minimum</span>
             <input
               type="number"
-              min="0"
+              min={priceStats.min}
+              max={priceStats.max}
               value={draft.minPrice}
               onChange={(e) => set({ minPrice: e.target.value })}
-              placeholder="0"
+              placeholder={String(priceStats.min)}
               className="input"
             />
           </label>
+          <span className="mt-5 text-ink-400">—</span>
           <label className="flex-1">
-            <span className="mb-1 block text-xs text-ink-500">Max</span>
+            <span className="mb-1 block text-xs text-ink-500">Maximum</span>
             <input
               type="number"
-              min="0"
+              min={priceStats.min}
+              max={priceStats.max}
               value={draft.maxPrice}
               onChange={(e) => set({ maxPrice: e.target.value })}
-              placeholder="1000+"
+              placeholder={`${priceStats.max}+`}
               className="input"
             />
           </label>
         </div>
-        {(draft.minPrice || draft.maxPrice) && (
-          <p className="mt-2 text-sm text-ink-500">
-            {formatCurrency(draft.minPrice || 0)} – {draft.maxPrice ? formatCurrency(draft.maxPrice) : 'Any'}
-          </p>
-        )}
       </section>
 
       {/* Property type */}
@@ -213,5 +240,76 @@ export default function FilterModal({ open, onClose, initial = {}, onApply }) {
         </label>
       </section>
     </Modal>
+  );
+}
+
+
+/**
+ * Price distribution histogram with an overlaid dual-range slider.
+ * Bars within the selected [min, max] range are highlighted; dragging either
+ * handle (or editing the number inputs) updates the draft filter.
+ */
+function PriceHistogram({ stats, minPrice, maxPrice, onChange }) {
+  const lo = stats.min;
+  const hi = stats.max;
+  const span = Math.max(1, hi - lo);
+
+  // Current selected bounds, clamped to the available range.
+  const curMin = Math.max(lo, Math.min(minPrice === '' ? lo : Number(minPrice), hi));
+  const curMax = Math.min(hi, Math.max(maxPrice === '' ? hi : Number(maxPrice), lo));
+
+  const maxCount = Math.max(1, ...stats.buckets.map((b) => b.count));
+  const pct = (v) => ((v - lo) / span) * 100;
+
+  if (!stats.buckets.length) {
+    return <div className="h-20 skeleton rounded-xl" />;
+  }
+
+  return (
+    <div>
+      {/* Histogram bars */}
+      <div className="flex h-20 items-end gap-[3px]" aria-hidden="true">
+        {stats.buckets.map((b, i) => {
+          const inRange = b.to >= curMin && b.from <= curMax;
+          return (
+            <div
+              key={i}
+              title={`${formatCurrency(b.from)}–${formatCurrency(b.to)}: ${b.count}`}
+              style={{ height: `${Math.max(6, (b.count / maxCount) * 100)}%` }}
+              className={`flex-1 rounded-t transition-colors ${
+                inRange ? 'bg-coral-400' : 'bg-ink-200 dark:bg-ink-700'
+              }`}
+            />
+          );
+        })}
+      </div>
+
+      {/* Dual-range slider over a shared track */}
+      <div className="range-slider mt-1">
+        {/* Base track */}
+        <div className="absolute left-0 top-1/2 h-1 w-full -translate-y-1/2 rounded-full bg-ink-200 dark:bg-ink-700" />
+        {/* Selected segment */}
+        <div
+          className="absolute top-1/2 h-1 -translate-y-1/2 rounded-full bg-coral-500"
+          style={{ left: `${pct(curMin)}%`, right: `${100 - pct(curMax)}%` }}
+        />
+        <input
+          type="range"
+          min={lo}
+          max={hi}
+          value={curMin}
+          aria-label="Minimum price"
+          onChange={(e) => onChange({ minPrice: String(Math.min(Number(e.target.value), curMax - 1)) })}
+        />
+        <input
+          type="range"
+          min={lo}
+          max={hi}
+          value={curMax}
+          aria-label="Maximum price"
+          onChange={(e) => onChange({ maxPrice: String(Math.max(Number(e.target.value), curMin + 1)) })}
+        />
+      </div>
+    </div>
   );
 }

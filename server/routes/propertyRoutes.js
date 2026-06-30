@@ -7,6 +7,7 @@ import {
   updateProperty,
   deleteProperty,
   getMyListings,
+  getPriceStats,
 } from '../controllers/propertyController.js';
 import { protect, restrictTo } from '../middleware/auth.js';
 import validate from '../middleware/validate.js';
@@ -32,6 +33,9 @@ const propertyRules = [
 
 // Host-scoped routes first so "/host/me" is not captured by "/:id".
 router.get('/host/me', protect, restrictTo('host', 'admin'), getMyListings);
+
+// Price distribution for the filter UI (static segment before "/:id").
+router.get('/stats/prices', getPriceStats);
 
 router.route('/').get(getProperties).post(protect, restrictTo('host', 'admin'), propertyRules, validate, createProperty);
 

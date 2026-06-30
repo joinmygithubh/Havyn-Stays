@@ -86,9 +86,12 @@ const seed = async () => {
   }
   console.log(`📅  Created ${createdBookings.length} bookings`);
 
-  // Reviews for completed stays (recalcPropertyRating hook updates listings).
+  // Reviews for completed stays (linked to the booking) + fuller, varied
+  // reviews on every listing from multiple authors so ratings look realistic.
   const completed = createdBookings.filter((x) => x.booking.bookingStatus === 'Completed');
   let reviewCount = 0;
+
+  // 1) The guest's reviews for their completed stays.
   for (let i = 0; i < completed.length; i += 1) {
     const { booking, property } = completed[i];
     const seed = reviewSeeds[i % reviewSeeds.length];
@@ -99,26 +102,35 @@ const seed = async () => {
       booking: booking._id,
       rating: seed.rating,
       comment: seed.comment,
-    });
+    }).catch(() => {});
     booking.isReviewed = true;
     // eslint-disable-next-line no-await-in-loop
     await booking.save();
     reviewCount += 1;
   }
 
-  // Add a couple more reviews from hosts-as-guests to enrich rating data.
-  for (let i = 0; i < 3; i += 1) {
-    const prop = properties[i + 4];
-    const author = createdUsers[(i + 1) % createdUsers.length];
-    const seed = reviewSeeds[i % reviewSeeds.length];
-    // eslint-disable-next-line no-await-in-loop
-    await Review.create({
-      property: prop._id,
-      author: author._id,
-      rating: seed.rating,
-      comment: seed.comment,
-    }).catch(() => {}); // ignore unique-index dupes
-    reviewCount += 1;
+  // 2) Additional reviews (2–4 per property) from users other than the host.
+  //    The unique {property, author} index naturally de-duplicates.
+  let seedIdx = 0;
+  for (const property of properties) {
+    const hostId = property.host.toString();
+    const authors = createdUsers.filter((u) => u._id.toString() !== hostId);
+    // Rotate the author order per property so distribution varies.
+    const offset = seedIdx % authors.length;
+    const rotated = [...authors.slice(offset), ...authors.slice(0, offset)];
+    const num = 2 + (seedIdx % 3); // 2, 3 or 4 reviews
+    for (let i = 0; i < num && i < rotated.length; i += 1) {
+      const seed = reviewSeeds[(seedIdx * 2 + i) % reviewSeeds.length];
+      // eslint-disable-next-line no-await-in-loop
+      await Review.create({
+        property: property._id,
+        author: rotated[i]._id,
+        rating: seed.rating,
+        comment: seed.comment,
+      }).catch(() => {}); // ignore unique-index dupes
+      reviewCount += 1;
+    }
+    seedIdx += 1;
   }
   console.log(`⭐  Created ~${reviewCount} reviews`);
 

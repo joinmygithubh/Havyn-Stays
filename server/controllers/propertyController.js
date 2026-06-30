@@ -175,3 +175,38 @@ export const getMyListings = asyncHandler(async (req, res) => {
     .lean();
   return sendResponse(res, 200, 'Your listings', { items });
 });
+
+/**
+ * @route   GET /api/properties/stats/prices
+ * @access  Public
+ * @desc    Price distribution (min, max, and a histogram of buckets) used to
+ *          render the price-range slider + histogram in the filter UI.
+ */
+export const getPriceStats = asyncHandler(async (req, res) => {
+  const docs = await Property.find({ isActive: true }).select('pricePerNight -_id').lean();
+  const prices = docs.map((d) => d.pricePerNight).sort((a, b) => a - b);
+
+  if (prices.length === 0) {
+    return sendResponse(res, 200, 'Price stats', { min: 0, max: 0, count: 0, buckets: [] });
+  }
+
+  const min = prices[0];
+  const max = prices[prices.length - 1];
+  const BUCKETS = 24;
+  const size = Math.max(1, (max - min) / BUCKETS);
+
+  const buckets = Array.from({ length: BUCKETS }, (_, i) => ({
+    from: Math.round(min + i * size),
+    to: Math.round(min + (i + 1) * size),
+    count: 0,
+  }));
+
+  prices.forEach((p) => {
+    let idx = Math.floor((p - min) / size);
+    if (idx >= BUCKETS) idx = BUCKETS - 1;
+    if (idx < 0) idx = 0;
+    buckets[idx].count += 1;
+  });
+
+  return sendResponse(res, 200, 'Price stats', { min, max, count: prices.length, buckets });
+});

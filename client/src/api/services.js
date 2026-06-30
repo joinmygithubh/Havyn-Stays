@@ -27,6 +27,7 @@ export const propertyService = {
   update: (id, body) => api.put(`/properties/${id}`, body).then((r) => r.data),
   remove: (id) => api.delete(`/properties/${id}`).then((r) => r.data),
   myListings: () => api.get('/properties/host/me').then((r) => r.data),
+  priceStats: () => api.get('/properties/stats/prices').then((r) => r.data),
 };
 
 /* ───────────── Bookings ───────────── */
