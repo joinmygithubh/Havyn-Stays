@@ -1,0 +1,50 @@
+# ──────────────────────────────────────────────────────────────
+# Havyn — full stack in one command:  docker compose up --build
+#   • MongoDB     (internal)
+#   • API server  → http://localhost:5000
+#   • Web (nginx) → http://localhost:8080   (proxies /api to the server)
+#
+# To load sample data after the stack is up:
+#   docker compose exec server npm run seed
+# ──────────────────────────────────────────────────────────────
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - havyn-db:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build: ./server
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      MONGO_URI: mongodb://mongo:27017/havyn
+      CLIENT_URL: http://localhost:8080
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      JWT_EXPIRES_IN: 7d
+      # Optional Stripe test keys; falls back to the mock gateway if unset.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+    ports:
+      - '5000:5000'
+
+  web:
+    build: ./client
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - '8080:80'
+
+volumes:
+  havyn-db:
